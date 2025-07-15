@@ -1,9 +1,19 @@
 import type { Message } from "ai";
-import { streamText, createDataStreamResponse } from "ai";
+import {
+  streamText,
+  createDataStreamResponse,
+  appendResponseMessages,
+} from "ai";
 import { z } from "zod";
 import { searchSerper } from "~/serper";
 import { model } from "~/model";
 import { auth } from "~/server/auth";
+
+import { db } from "~/server/db";
+import { chats, messages as messagesTable } from "~/server/db/schema";
+import { eq } from "drizzle-orm";
+import { nanoid } from "nanoid";
+import { upsertChat } from "~/server/db/chat-helpers";
 
 export const maxDuration = 60;
 
@@ -15,8 +25,37 @@ export async function POST(request: Request) {
 
   const body = (await request.json()) as { messages: Array<Message> };
 
+  const {
+    messages: incomingMessages,
+    chatId,
+  }: { messages: any[]; chatId?: string } = body;
+  const userId = session.user.id;
+
+  // 1. If no chatId, create a new chat before streaming
+  let chat_id: string | undefined = chatId;
+  let isNewChat = false;
+  if (!chat_id) {
+    chat_id = nanoid();
+    isNewChat = true;
+    await upsertChat({
+      id: chat_id,
+      userId,
+      title: incomingMessages[0]?.content?.slice(0, 40) || "New Chat",
+      createdAt: new Date(),
+    });
+    // Optionally, insert the first user message here as well
+  }
+
   return createDataStreamResponse({
     execute: async (dataStream) => {
+      // If a new chat was created, send the chatId to the frontend
+      if (isNewChat && chat_id) {
+        dataStream.writeData({
+          type: "NEW_CHAT_CREATED",
+          chatId: chat_id,
+        });
+      }
+
       const { messages } = body;
 
       const result = streamText({
@@ -41,6 +80,30 @@ export async function POST(request: Request) {
               }));
             },
           },
+        },
+        onFinish: async ({ response }) => {
+          const responseMessages = response.messages;
+          const updatedMessages = appendResponseMessages({
+            messages: incomingMessages,
+            responseMessages,
+          });
+
+          // 3. Replace all messages in the DB for this chat
+          await db
+            .delete(messagesTable)
+            .where(eq(messagesTable.chatId, chat_id));
+          await db.insert(messagesTable).values(
+            updatedMessages.map((msg, i) => ({
+              id: msg.id || nanoid(),
+              chatId: chat_id,
+              role: msg.role,
+              parts: msg.parts,
+              order: i,
+              createdAt: new Date(),
+            })),
+          );
+
+          // Optionally, update chat title if needed
         },
       });
       result.mergeIntoDataStream(dataStream);

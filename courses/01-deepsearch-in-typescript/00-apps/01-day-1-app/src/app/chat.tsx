@@ -8,13 +8,18 @@ import { useState } from "react";
 
 interface ChatProps {
   userName: string;
+  chatId?: string;
 }
 
-export const ChatPage = ({ userName }: ChatProps) => {
+export const ChatPage = ({ userName, chatId }: ChatProps) => {
   const { data: session } = useSession();
   const [showSignIn, setShowSignIn] = useState(false);
   const { messages, input, handleInputChange, handleSubmit, isLoading } =
-    useChat();
+    useChat({
+      body: {
+        chatId,
+      },
+    });
 
   const handleProtectedSubmit = (e: React.FormEvent) => {
     if (!session) {
