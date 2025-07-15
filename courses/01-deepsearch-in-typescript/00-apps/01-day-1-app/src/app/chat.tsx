@@ -10,14 +10,6 @@ interface ChatProps {
   userName: string;
 }
 
-const messages = [
-  {
-    id: "1",
-    content: "Hello, how are you?",
-    role: "user",
-  },
-];
-
 export const ChatPage = ({ userName }: ChatProps) => {
   const { data: session } = useSession();
   const [showSignIn, setShowSignIn] = useState(false);
