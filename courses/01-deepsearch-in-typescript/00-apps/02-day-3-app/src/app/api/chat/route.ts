@@ -7,6 +7,8 @@ import {
 import { model } from "~/model";
 import { auth } from "~/server/auth";
 import { searchSerper } from "~/serper";
+import { bulkCrawlWebsites, type CrawlErrorResponse } from "~/scraper";
+import { cacheWithRedis } from "~/server/redis/redis";
 import { z } from "zod";
 import { upsertChat } from "~/server/db/queries";
 import { eq } from "drizzle-orm";
@@ -16,6 +18,22 @@ import { Langfuse } from "langfuse";
 import { env } from "~/env";
 
 export const maxDuration = 60;
+
+// Cache the scrapePages functionality
+const cachedScrapePages = cacheWithRedis(
+  "scrapePages",
+  async (urls: string[]) => {
+    return bulkCrawlWebsites({ urls });
+  },
+);
+
+// Helper function to format crawl results
+const formatCrawlResult = (r: { url: string; result: any }) => ({
+  url: r.url,
+  success: r.result.success,
+  content: r.result.success ? r.result.data : undefined,
+  error: r.result.success ? undefined : r.result.error,
+});
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -89,16 +107,28 @@ export async function POST(request: Request) {
             langfuseTraceId: trace.id,
           },
         },
-        system: `You are a helpful AI assistant with access to real-time web search capabilities. When answering questions:
+        system: `You are a helpful AI assistant with access to real-time web search capabilities and web page scraping. When answering questions:
 
-1. Always search the web for up-to-date information when relevant
-2. ALWAYS format URLs as markdown links using the format [title](url)
-3. Be thorough but concise in your responses
-4. If you're unsure about something, search the web to verify
-5. When providing information, always include the source where you found it using markdown links
-6. Never include raw URLs - always use markdown link format
+1. First, search the web for up-to-date information when relevant using the searchWeb tool
+2. Then, ALWAYS use the scrapePages tool to get the complete text content from 4-6 of the most relevant and diverse URLs found in your search
+3. When selecting URLs to scrape, prioritize:
+   - Different types of sources (news sites, official websites, academic sources, forums, blogs)
+   - Recent and authoritative content
+   - Diverse perspectives on the topic
+   - Primary sources when available
+4. Use scrapePages for:
+   - Getting detailed information from specific articles or pages
+   - Obtaining full context beyond search snippets
+   - Analyzing complete content of pages
+   - Providing comprehensive information from multiple sources
+5. ALWAYS format URLs as markdown links using the format [title](url)
+6. Be thorough but concise in your responses
+7. If you're unsure about something, search the web to verify and then scrape 4-6 relevant pages
+8. When providing information, always include the source where you found it using markdown links
+9. Never include raw URLs - always use markdown link format
+10. Synthesize information from multiple scraped sources to provide a well-rounded answer
 
-Remember to use the searchWeb tool whenever you need to find current information.`,
+Remember: Search first with searchWeb, then scrape 4-6 diverse and relevant pages with scrapePages to provide comprehensive and accurate information from multiple perspectives.`,
         tools: {
           searchWeb: {
             parameters: z.object({
@@ -115,6 +145,42 @@ Remember to use the searchWeb tool whenever you need to find current information
                 link: result.link,
                 snippet: result.snippet,
               }));
+            },
+          },
+          scrapePages: {
+            parameters: z.object({
+              urls: z
+                .array(z.string())
+                .describe("Array of URLs to scrape for full content"),
+            }),
+            execute: async ({ urls }) => {
+              const result = await cachedScrapePages(urls);
+
+              // Handle the overall result based on success/failure
+              if (result.success) {
+                // All scraping was successful
+                return {
+                  success: true,
+                  results: result.results.map(formatCrawlResult),
+                  summary: `Successfully scraped ${result.results.length} pages`,
+                };
+              } else {
+                // Some or all scraping failed
+                const successfulResults = result.results.filter(
+                  (r) => r.result.success,
+                );
+                const failedResults = result.results.filter(
+                  (r) => !r.result.success,
+                );
+
+                return {
+                  success: false,
+                  results: result.results.map(formatCrawlResult),
+                  summary: `Scraped ${successfulResults.length}/${result.results.length} pages successfully`,
+                  error: result.error,
+                  failedUrls: failedResults.map((r) => r.url),
+                };
+              }
             },
           },
         },
