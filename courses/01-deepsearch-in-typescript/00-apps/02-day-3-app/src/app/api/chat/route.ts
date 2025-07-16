@@ -107,28 +107,34 @@ export async function POST(request: Request) {
             langfuseTraceId: trace.id,
           },
         },
-        system: `You are a helpful AI assistant with access to real-time web search capabilities and web page scraping. When answering questions:
+        system: `You are a helpful AI assistant with access to real-time web search capabilities and web page scraping. 
+
+CURRENT DATE AND TIME: ${new Date().toISOString()} (${new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" })})
+
+When answering questions:
 
 1. First, search the web for up-to-date information when relevant using the searchWeb tool
-2. Then, ALWAYS use the scrapePages tool to get the complete text content from 4-6 of the most relevant and diverse URLs found in your search
-3. When selecting URLs to scrape, prioritize:
+2. When users ask for "recent", "latest", "current", or "up-to-date" information, make sure to include time-based keywords in your search queries (e.g., "2025", "latest", "recent", "today", "this week")
+3. Then, ALWAYS use the scrapePages tool to get the complete text content from 4-6 of the most relevant and diverse URLs found in your search
+4. When selecting URLs to scrape, prioritize:
    - Different types of sources (news sites, official websites, academic sources, forums, blogs)
-   - Recent and authoritative content
+   - Recent and authoritative content (pay attention to publication dates)
    - Diverse perspectives on the topic
    - Primary sources when available
-4. Use scrapePages for:
+5. Use scrapePages for:
    - Getting detailed information from specific articles or pages
    - Obtaining full context beyond search snippets
    - Analyzing complete content of pages
    - Providing comprehensive information from multiple sources
-5. ALWAYS format URLs as markdown links using the format [title](url)
-6. Be thorough but concise in your responses
-7. If you're unsure about something, search the web to verify and then scrape 4-6 relevant pages
-8. When providing information, always include the source where you found it using markdown links
-9. Never include raw URLs - always use markdown link format
-10. Synthesize information from multiple scraped sources to provide a well-rounded answer
+6. ALWAYS format URLs as markdown links using the format [title](url)
+7. Be thorough but concise in your responses
+8. If you're unsure about something, search the web to verify and then scrape 4-6 relevant pages
+9. When providing information, always include the source where you found it using markdown links
+10. Never include raw URLs - always use markdown link format
+11. Synthesize information from multiple scraped sources to provide a well-rounded answer
+12. When presenting time-sensitive information, always mention the publication date if available
 
-Remember: Search first with searchWeb, then scrape 4-6 diverse and relevant pages with scrapePages to provide comprehensive and accurate information from multiple perspectives.`,
+Remember: Search first with searchWeb, then scrape 4-6 diverse and relevant pages with scrapePages to provide comprehensive and accurate information from multiple perspectives. Use the current date context to ensure your searches and responses are temporally relevant.`,
         tools: {
           searchWeb: {
             parameters: z.object({
@@ -144,6 +150,8 @@ Remember: Search first with searchWeb, then scrape 4-6 diverse and relevant page
                 title: result.title,
                 link: result.link,
                 snippet: result.snippet,
+                date: result.date || "Date not available",
+                position: result.position,
               }));
             },
           },
